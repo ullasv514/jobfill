@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { supabase } from '../utils/supabase';
+import { supabase, setGuestMode } from '../utils/supabase';
 
 interface LoginScreenProps {
   onLogin: () => void;
@@ -273,6 +273,74 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
           }}
         >
           {mode === 'login' ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
+        </button>
+
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          width: '100%',
+          margin: '10px 0 2px',
+        }}>
+          <div style={{ flex: 1, height: 1, background: 'var(--color-pc-border)' }} />
+          <span style={{ fontSize: '0.7rem', color: 'var(--color-pc-text-muted)' }}>offline access</span>
+          <div style={{ flex: 1, height: 1, background: 'var(--color-pc-border)' }} />
+        </div>
+
+        <button
+          onClick={async () => {
+            await setGuestMode(true);
+            onLogin();
+          }}
+          type="button"
+          disabled={loading}
+          style={{
+            padding: '9px 14px',
+            borderRadius: 10,
+            border: '1px solid var(--color-pc-border)',
+            background: 'rgba(255, 255, 255, 0.05)',
+            color: 'var(--color-pc-text)',
+            fontSize: '0.8rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            fontFamily: 'var(--font-sans)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+          }}
+        >
+          ⚡ Continue as Guest (Offline Mode)
+        </button>
+
+        <button
+          onClick={async () => {
+            if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+              await chrome.storage.local.remove([
+                'personal_copilot_profile',
+                'local_guest_documents',
+                'jf_document_registry',
+                'jobfill_guest_mode',
+                'jobfill_onboarding_done_local-guest-user',
+              ]);
+            }
+            if (typeof sessionStorage !== 'undefined') sessionStorage.clear();
+            setInfo('✅ All previous local data & documents cleared!');
+            setError('');
+          }}
+          type="button"
+          style={{
+            background: 'none',
+            border: 'none',
+            color: 'var(--color-pc-text-muted)',
+            fontSize: '0.72rem',
+            cursor: 'pointer',
+            fontFamily: 'var(--font-sans)',
+            marginTop: 4,
+            textDecoration: 'underline',
+          }}
+        >
+          🧹 Clear previous local data (Start fresh)
         </button>
       </div>
 

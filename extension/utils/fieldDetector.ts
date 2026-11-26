@@ -640,7 +640,7 @@ export function scanPageFields(): DetectedField[] {
   for (const el of elements) {
     const isFileInput = el instanceof HTMLInputElement && el.type === 'file';
     const fileInputLabel = isFileInput ? getVisibleFileInputLabel(el) : undefined;
-    if (!isRenderedField(el) && !fileInputLabel) continue;
+    if (!isFileInput && !isRenderedField(el) && !fileInputLabel) continue;
 
     // Skip inputs that belong to React-Select or custom combobox dropdowns (handled by Dropdown Pipeline)
     if (el instanceof HTMLInputElement && isDropdownComboboxInput(el)) continue;
@@ -734,6 +734,47 @@ export function scanPageFields(): DetectedField[] {
     });
   }
 
+  // Google Forms & Button-based File Upload Question Cards (where native file input is created on click)
+  const fileQuestionCards = queryAcrossOpenShadowRoots<HTMLElement>(
+    '.Qr7Oae, [role="listitem"], .freebirdFormviewerViewNumberedItemContainer, [data-params*="file"]'
+  );
+  for (const card of fileQuestionCards) {
+    const addFileBtn = card.querySelector<HTMLElement>(
+      '[role="button"], button, .uArJbe, [aria-label*="file" i], [aria-label*="upload" i]'
+    );
+    if (!addFileBtn) continue;
+    const btnText = (addFileBtn.textContent || '').trim();
+    const btnAria = addFileBtn.getAttribute('aria-label') || '';
+    const isAddFile = /add\s*file|upload\s*file|attach\s*file/i.test(btnText)
+      || /add\s*file|upload\s*file|attach\s*file/i.test(btnAria);
+
+    const heading = card.querySelector<HTMLElement>('[role="heading"], .M7eMe, h1, h2, h3, h4');
+    const headingText = heading?.textContent?.trim() || '';
+    const isFileHeading = /resume|cv|curriculum\s+vitae|upload|document|portfolio|transcript/i.test(headingText);
+
+    if (isAddFile || isFileHeading) {
+      const labelText = headingText || btnAria || btnText || 'Resume Upload';
+      const selector = getUniqueSelector(addFileBtn);
+      if (!detected.some((d) => d.selector === selector || (d.attributes.labelText && d.attributes.labelText === labelText))) {
+        detected.push({
+          selector,
+          tagName: 'input',
+          inputType: 'file',
+          attributes: {
+            labelText,
+            ariaLabel: btnAria || undefined,
+            name: 'resume_upload',
+            accept: '.pdf,.doc,.docx',
+          },
+          profileField: null,
+          confidence: 1,
+          category: 'FILE_UPLOAD',
+          currentValue: '',
+        });
+      }
+    }
+  }
+
   return detected;
 }
 
@@ -756,6 +797,14 @@ export function countVisibleFormFields(): number {
   for (const element of workdayDropdowns) {
     if (isRenderedField(element)) count++;
   }
+
+  const googleFormAddFile = queryAcrossOpenShadowRoots<HTMLElement>(
+    '.Qr7Oae [role="button"], .uArJbe, [aria-label*="Add file" i]'
+  );
+  for (const element of googleFormAddFile) {
+    if (isRenderedField(element)) count++;
+  }
+
   return count;
 }
 
@@ -764,9 +813,31 @@ export function hasVisibleFormFields(): boolean {
 }
 
 function getVisibleFileInputLabel(input: HTMLInputElement): string | undefined {
+  const directAria = input.getAttribute('aria-label') || input.getAttribute('title');
+  if (directAria && directAria.trim().length > 1) return directAria.trim();
+
+  const nameOrId = [input.name, input.id].filter(Boolean).join(' ');
+  if (/\b(?:resume|cv|curriculum\s+vitae|document|transcript|certificate|portfolio|photo)\b/i.test(nameOrId)) {
+    return nameOrId.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim();
+  }
+
+  if (input.id) {
+    const labelFor = document.querySelector<HTMLLabelElement>(`label[for="${CSS.escape(input.id)}"]`);
+    if (labelFor?.textContent?.trim()) return labelFor.textContent.trim();
+  }
+
+  const parentLabel = input.closest('label');
+  if (parentLabel?.textContent?.trim()) return parentLabel.textContent.trim();
+
   let ancestor = input.parentElement;
   let depth = 0;
-  while (ancestor && depth < 5) {
+  while (ancestor && depth < 8) {
+    const heading = ancestor.querySelector<HTMLElement>('[role="heading"], .M7eMe, h1, h2, h3, h4, h5, h6, legend, .form-label');
+    if (heading?.textContent?.trim()) {
+      const headingText = heading.textContent.replace(/\s+/g, ' ').trim();
+      if (headingText.length > 1 && headingText.length < 240) return headingText;
+    }
+
     const triggers = Array.from(ancestor.querySelectorAll<HTMLElement>('button, label, [role="button"]'));
     for (const trigger of triggers) {
       if (!isRenderedField(trigger)) continue;
@@ -780,7 +851,8 @@ function getVisibleFileInputLabel(input: HTMLInputElement): string | undefined {
     ancestor = ancestor.parentElement;
     depth++;
   }
-  return undefined;
+
+  return 'Resume Upload';
 }
 
 // ---- AI Layer: Sanitized Field Extraction ----

@@ -148,20 +148,62 @@ function observeFormStructureChanges(): void {
   });
 }
 
-function injectFile(fileName: string, mimeType: string, dataUrl: string, selector?: string): boolean {
-  const fileInputs = document.querySelectorAll<HTMLInputElement>('input[type="file"]');
-  if (fileInputs.length === 0 && !selector) return false;
+function applyFileToInput(targetInput: HTMLInputElement, file: File): boolean {
+  try {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+    targetInput.files = dataTransfer.files;
 
-  let targetInput: HTMLInputElement;
-  if (selector) {
-    const element = getElementBySelector(selector);
-    if (!(element instanceof HTMLInputElement) || element.type !== 'file') return false;
-    targetInput = element;
-  } else {
-    targetInput = fileInputs[0];
+    targetInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    targetInput.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+
+    // Dropzone simulation for drag-and-drop zones
+    const dropZone = targetInput.closest('[class*="drop"], [class*="upload"], [class*="drag"], .picker-dialog, .quantumWizDialogPaper')
+      ?? targetInput.parentElement;
+    if (dropZone) {
+      dropZone.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, composed: true, dataTransfer }));
+      dropZone.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, composed: true, dataTransfer }));
+      dropZone.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, composed: true, dataTransfer }));
+    }
+
+    // Visual feedback: brief green glow
+    try {
+      const rect = targetInput.getBoundingClientRect();
+      const visualTarget = (rect.width > 0 && rect.height > 0)
+        ? targetInput
+        : (dropZone ?? targetInput.parentElement);
+      if (visualTarget) {
+        const vRect = visualTarget.getBoundingClientRect();
+        if (vRect.width > 0 && vRect.height > 0) {
+          const glow = document.createElement('div');
+          glow.style.cssText = `
+            position: absolute;
+            top: ${vRect.top + window.scrollY - 3}px;
+            left: ${vRect.left + window.scrollX - 3}px;
+            width: ${vRect.width + 6}px;
+            height: ${vRect.height + 6}px;
+            border: 2px solid #22c55e;
+            border-radius: 6px;
+            box-shadow: 0 0 12px rgba(34,197,94,0.5);
+            pointer-events: none;
+            z-index: 999999;
+            transition: opacity 0.5s ease;
+          `;
+          document.body.appendChild(glow);
+          setTimeout(() => { glow.style.opacity = '0'; }, 1500);
+          setTimeout(() => { glow.remove(); }, 2000);
+        }
+      }
+    } catch {}
+
+    return true;
+  } catch (err) {
+    console.warn('[JobFill] applyFileToInput failed:', err);
+    return false;
   }
+}
 
-  // Convert base64 data URL back to a File object
+async function injectFile(fileName: string, mimeType: string, dataUrl: string, selector?: string): Promise<boolean> {
   const [, b64data] = dataUrl.split(',');
   const binary = atob(b64data);
   const bytes = new Uint8Array(binary.length);
@@ -169,86 +211,139 @@ function injectFile(fileName: string, mimeType: string, dataUrl: string, selecto
     bytes[i] = binary.charCodeAt(i);
   }
   const file = new File([bytes], fileName, { type: mimeType });
-  const acceptedTypes = targetInput.accept.split(',').map((item) => item.trim().toLowerCase()).filter(Boolean);
-  if (acceptedTypes.length > 0) {
-    const extension = `.${fileName.split('.').pop()?.toLowerCase() ?? ''}`;
-    const isAccepted = acceptedTypes.some((accepted) =>
-      accepted === extension
-      || accepted === mimeType.toLowerCase()
-      || (accepted.endsWith('/*') && mimeType.toLowerCase().startsWith(accepted.slice(0, -1))),
-    );
-    if (!isAccepted) return false;
-  }
 
-  // Keep legacy manual upload behavior when no field selector is specified.
-  const fileNameLower = fileName.toLowerCase();
-
-  if (!selector) for (const input of fileInputs) {
-    const label = input.getAttribute('aria-label')?.toLowerCase() ?? '';
-    const name = input.getAttribute('name')?.toLowerCase() ?? '';
-    const accept = input.getAttribute('accept')?.toLowerCase() ?? '';
-    const parentText = input.closest('div, section, fieldset')?.textContent?.toLowerCase() ?? '';
-
-    // Match resume/cv inputs to resume files
-    if (
-      (fileNameLower.includes('resume') || fileNameLower.includes('cv') || fileNameLower.includes('docscan')) &&
-      (label.includes('resume') || name.includes('resume') || parentText.includes('resume') || parentText.includes('upload'))
-    ) {
-      targetInput = input;
-      break;
-    }
-
-    // Match photo inputs
-    if (
-      (fileNameLower.includes('photo') || fileNameLower.includes('img')) &&
-      (label.includes('photo') || name.includes('photo') || accept.includes('image'))
-    ) {
-      targetInput = input;
-      break;
+  // 1. Direct file input check
+  let targetInput: HTMLInputElement | null = null;
+  if (selector) {
+    const el = getElementBySelector(selector);
+    if (el instanceof HTMLInputElement && el.type === 'file') {
+      targetInput = el;
+    } else if (el) {
+      targetInput = el.querySelector<HTMLInputElement>('input[type="file"]')
+        || el.parentElement?.querySelector<HTMLInputElement>('input[type="file"]')
+        || null;
     }
   }
 
-  // Inject the file using DataTransfer API
-  const dataTransfer = new DataTransfer();
-  dataTransfer.items.add(file);
-  targetInput.files = dataTransfer.files;
-
-  // Dispatch events to notify React/Angular/Vue frameworks
-  targetInput.dispatchEvent(new Event('change', { bubbles: true }));
-  targetInput.dispatchEvent(new Event('input', { bubbles: true }));
-
-  // Also simulate a drop event for sites that use drag-and-drop zones
-  const dropZone = targetInput.closest('[class*="drop"], [class*="upload"], [class*="drag"]') ?? targetInput.parentElement;
-  if (dropZone) {
-    const dropEvent = new DragEvent('drop', {
-      bubbles: true,
-      cancelable: true,
-      dataTransfer,
-    });
-    dropZone.dispatchEvent(dropEvent);
+  if (!targetInput) {
+    const fileInputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="file"]'));
+    if (fileInputs.length > 0) {
+      const fileNameLower = fileName.toLowerCase();
+      targetInput = fileInputs.find((input) => {
+        const text = (
+          (input.getAttribute('aria-label') ?? '') +
+          input.name +
+          input.id +
+          (input.closest('label, div, section, fieldset')?.textContent ?? '')
+        ).toLowerCase();
+        return text.includes('resume') || text.includes('cv') || text.includes('upload');
+      }) || fileInputs[0];
+    }
   }
 
-  // Visual feedback: brief green glow
-  const rect = targetInput.getBoundingClientRect();
-  const glow = document.createElement('div');
-  glow.style.cssText = `
-    position: absolute;
-    top: ${rect.top + window.scrollY - 3}px;
-    left: ${rect.left + window.scrollX - 3}px;
-    width: ${rect.width + 6}px;
-    height: ${rect.height + 6}px;
-    border: 2px solid #22c55e;
-    border-radius: 6px;
-    box-shadow: 0 0 12px rgba(34,197,94,0.5);
-    pointer-events: none;
-    z-index: 999999;
-    transition: opacity 0.5s ease;
-  `;
-  document.body.appendChild(glow);
-  setTimeout(() => { glow.style.opacity = '0'; }, 1500);
-  setTimeout(() => { glow.remove(); }, 2000);
+  if (targetInput) {
+    return applyFileToInput(targetInput, file);
+  }
 
-  return true;
+  // 2. Check for "Add file" or "Upload" trigger button (e.g. Google Forms)
+  let triggerBtn: HTMLElement | null = null;
+  if (selector) {
+    const el = getElementBySelector(selector);
+    if (el && !(el instanceof HTMLInputElement)) {
+      triggerBtn = el;
+    }
+  }
+
+  if (!triggerBtn) {
+    triggerBtn = document.querySelector<HTMLElement>(
+      '.Qr7Oae [role="button"], .uArJbe, [aria-label*="Add file" i], [aria-label*="Upload file" i]'
+    ) || Array.from(document.querySelectorAll<HTMLElement>('[role="button"], button')).find((b) =>
+      /add\s*file|upload\s*file|attach\s*resume|upload\s*resume/i.test(b.textContent || '')
+    ) || null;
+  }
+
+  if (triggerBtn) {
+    console.log('[JobFill] Clicking Add file button to open upload dialog...');
+    triggerBtn.click();
+
+    // Poll for the file input to appear (in dialog or iframe)
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 200));
+
+      const newInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+      if (newInput) {
+        console.log('[JobFill] File input appeared after clicking trigger, injecting file...');
+        return applyFileToInput(newInput, file);
+      }
+
+      // Check if a picker iframe appeared
+      const iframes = Array.from(document.querySelectorAll<HTMLIFrameElement>('iframe'));
+      for (const iframe of iframes) {
+        try {
+          const doc = iframe.contentDocument;
+          if (doc) {
+            const iframeInput = doc.querySelector<HTMLInputElement>('input[type="file"]');
+            if (iframeInput) {
+              console.log('[JobFill] File input found inside picker iframe, injecting file...');
+              return applyFileToInput(iframeInput, file);
+            }
+          }
+        } catch {
+          // Cross-origin iframe handled via session storage
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+async function checkAndApplyPendingFileUpload(): Promise<void> {
+  let pending: { fileName: string; mimeType: string; dataUrl: string; timestamp: number } | undefined;
+  try {
+    const session = await chrome.storage.session.get('jf_pending_file_upload');
+    pending = session?.jf_pending_file_upload;
+  } catch {
+    return;
+  }
+  if (!pending || Date.now() - pending.timestamp > 60000) return;
+
+  const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+  if (fileInput) {
+    const [, b64data] = pending.dataUrl.split(',');
+    const binary = atob(b64data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const file = new File([bytes], pending.fileName, { type: pending.mimeType });
+
+    console.log('[JobFill] Auto-injecting pending resume into file input...', pending.fileName);
+    const ok = applyFileToInput(fileInput, file);
+    if (ok) {
+      await chrome.storage.session.remove('jf_pending_file_upload').catch(() => undefined);
+      console.log('[JobFill] Pending resume injected successfully!');
+    }
+  } else if (window.location.href.includes('picker') || Boolean(document.querySelector('.picker-dialog, [class*="picker"]'))) {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 200));
+      const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+      if (input) {
+        const [, b64data] = pending.dataUrl.split(',');
+        const binary = atob(b64data);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const file = new File([bytes], pending.fileName, { type: pending.mimeType });
+
+        const ok = applyFileToInput(input, file);
+        if (ok) {
+          await chrome.storage.session.remove('jf_pending_file_upload').catch(() => undefined);
+          console.log('[JobFill] Pending resume injected into picker frame successfully!');
+          break;
+        }
+      }
+    }
+  }
 }
 
 function isPageActivelyBusy(): boolean {
@@ -337,6 +432,15 @@ export default defineContentScript({
 
   main() {
     observeFormStructureChanges();
+    void checkAndApplyPendingFileUpload();
+
+    try {
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === 'session' && changes.jf_pending_file_upload?.newValue) {
+          void checkAndApplyPendingFileUpload();
+        }
+      });
+    } catch {}
 
     // Listen for messages from popup or background
     chrome.runtime.onMessage.addListener(
@@ -575,23 +679,24 @@ export default defineContentScript({
           }
 
           case 'INJECT_FILE': {
-            try {
-              const success = injectFile(message.fileName, message.mimeType, message.dataUrl, message.selector);
-              if (success) {
-                console.log(`[JobFill] Injected file "${message.fileName}" into file input`);
-                sendResponse({ type: 'INJECT_FILE_RESULT', success: true, message: `Uploaded "${message.fileName}" successfully.` });
-              } else {
-                sendResponse({ type: 'INJECT_FILE_RESULT', success: false, message: 'No file upload field found on this page.' });
-              }
-            } catch (err) {
-              console.error('[JobFill] File injection failed:', err);
-              sendResponse({
-                type: 'INJECT_FILE_RESULT',
-                success: false,
-                message: err instanceof Error ? err.message : 'File injection failed.',
+            injectFile(message.fileName, message.mimeType, message.dataUrl, message.selector)
+              .then((success) => {
+                if (success) {
+                  console.log(`[JobFill] Injected file "${message.fileName}" into file input`);
+                  sendResponse({ type: 'INJECT_FILE_RESULT', success: true, message: `Uploaded "${message.fileName}" successfully.` });
+                } else {
+                  sendResponse({ type: 'INJECT_FILE_RESULT', success: false, message: 'No file upload field found on this page.' });
+                }
+              })
+              .catch((err) => {
+                console.error('[JobFill] File injection failed:', err);
+                sendResponse({
+                  type: 'INJECT_FILE_RESULT',
+                  success: false,
+                  message: err instanceof Error ? err.message : 'File injection failed.',
+                });
               });
-            }
-            break;
+            return true;
           }
         }
 

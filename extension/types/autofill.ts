@@ -88,15 +88,21 @@ export type ProfileFieldKey =
   | 'experience.current.endDate'
   | 'experience.current.description'
   | 'experience.current.isCurrentlyEmployed'
+  | 'experience.total'
+  | 'experience.totalYears'
 
   // Professional
   | 'professional.linkedinProfileUrl'
   | 'professional.githubProfileUrl'
   | 'professional.portfolioUrl'
   | 'professional.skills'
+  | 'professional.currentCtc'
+  | 'professional.expectedCtc'
+  | 'professional.noticePeriod'
 
   // Application
   | 'application.expectedJoiningDate'
+  | 'application.additionalInformation'
 
   // Legacy aliases (for backward compatibility)
   | 'phones.primary'

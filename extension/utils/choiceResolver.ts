@@ -1,5 +1,6 @@
 import type { UserProfile } from '../types/profile';
 import { classifyDegree, pickEducation } from './educationPicker';
+import { calculateTotalExperience } from './fieldMapper';
 import type { ChoiceControl, ChoiceDecision, ChoiceEvidence, ChoiceOption } from '../types/choice';
 import { AI_MODEL, isBackendConfigured, requestAgentRouter } from './backendClient';
 
@@ -247,13 +248,118 @@ function academicYearMatches(label: string, year: number): boolean {
   return new RegExp(`^(?:year )?(?:${n}|${ordinal}|${YEAR_WORDS[year] ?? n})(?: year)?$`).test(label);
 }
 
+const BRANCH_SYNONYMS: Record<string, string[]> = {
+  cse: ['computer science', 'computer science and engineering', 'computer engineering', 'cs', 'cse', 'b.tech cse', 'be cse', 'computer science & engineering'],
+  ise: ['information science', 'information science and engineering', 'information technology', 'it', 'ise', 'is'],
+  it: ['information technology', 'information science', 'it', 'is', 'infotech'],
+  aiml: ['artificial intelligence', 'ai and ml', 'ai & ml', 'aiml', 'machine learning', 'artificial intelligence and machine learning', 'ai/ml'],
+  aids: ['ai and data science', 'ai & ds', 'aids', 'data science', 'artificial intelligence and data science'],
+  ece: ['electronics and communication', 'electronics & communication', 'ece', 'electronics', 'ec', 'etc', 'telecommunication'],
+  eee: ['electrical and electronics', 'electrical & electronics', 'eee', 'electrical', 'ee'],
+  me: ['mechanical', 'mechanical engineering', 'me', 'mech'],
+  civil: ['civil', 'civil engineering', 'ce'],
+  biotech: ['biotechnology', 'biotech', 'bt'],
+  bca: ['bachelor of computer applications', 'bca', 'computer applications'],
+  mca: ['master of computer applications', 'mca'],
+};
+
+function findOtherOption(options: ChoiceOption[]): ChoiceOption | undefined {
+  return options.find((opt) =>
+    !opt.disabled && /^(?:other|others|any other|please specify|other\s*[:(]?)\b/i.test(normalize(opt.label))
+  );
+}
+
+function findBestMatchingOption(options: ChoiceOption[], target: string): ChoiceOption | undefined {
+  const validOpts = options.filter((opt) => !opt.disabled && !optionIsGeneric(opt));
+  if (!validOpts.length) return options.find((opt) => !opt.disabled);
+
+  const targetTokens = new Set(normalize(target).split(' ').filter((t) => t.length > 2));
+  let bestScore = -1;
+  let bestOpt: ChoiceOption = validOpts[0];
+
+  for (const opt of validOpts) {
+    const optTokens = normalize(opt.label).split(' ').filter((t) => t.length > 2);
+    let overlap = 0;
+    for (const t of optTokens) {
+      if (targetTokens.has(t)) overlap++;
+    }
+    if (overlap > bestScore) {
+      bestScore = overlap;
+      bestOpt = opt;
+    }
+  }
+
+  return bestOpt;
+}
+
+function findBranchOptionMatch(options: ChoiceOption[], userBranch: string): ChoiceOption | undefined {
+  const normUser = normalize(userBranch);
+  const direct = options.find((opt) => !opt.disabled && !optionIsGeneric(opt) && (normalize(opt.label) === normUser || normalize(opt.label).includes(normUser) || normUser.includes(normalize(opt.label))));
+  if (direct) return direct;
+
+  for (const [, synonyms] of Object.entries(BRANCH_SYNONYMS)) {
+    const userMatchesSynonym = synonyms.some((s) => normUser.includes(s) || s.includes(normUser));
+    if (userMatchesSynonym) {
+      const match = options.find((opt) => {
+        if (opt.disabled || optionIsGeneric(opt)) return false;
+        const normOpt = normalize(opt.label);
+        return synonyms.some((s) => normOpt === s || normOpt.includes(s) || s.includes(normOpt));
+      });
+      if (match) return match;
+    }
+  }
+  return undefined;
+}
+
+function inferProfileValueForQuestion(question: string, profile: UserProfile): string | undefined {
+  const q = normalize(question);
+  if (/\b(?:college|university|institution|institute|school|campus)\b/.test(q)) {
+    return profile.education[0]?.institution || profile.secondaryEducation?.twelfth?.institution || profile.secondaryEducation?.tenth?.institution;
+  }
+  if (/\b(?:branch|stream|department|discipline|field of study|specialization|course|major)\b/.test(q)) {
+    return profile.education[0]?.field || profile.secondaryEducation?.twelfth?.stream;
+  }
+  if (/\b(?:degree|qualification)\b/.test(q)) {
+    return profile.education[0]?.degree;
+  }
+  if (/\b(?:city|current location|where (?:do|are) you (?:live|located)|residence|residing|state|hometown)\b/.test(q)) {
+    return profile.addresses[0]?.city || profile.addresses[0]?.state;
+  }
+  if (/\b(?:gender|sex)\b/.test(q)) {
+    return profile.personal.gender;
+  }
+  if (/\b(?:company|employer|organization)\b/.test(q)) {
+    return profile.experience[0]?.company || (profile.experience.length === 0 ? 'Fresher' : 'N/A');
+  }
+  if (/\b(?:designation|job title|role|position)\b/.test(q)) {
+    return profile.experience[0]?.title || (profile.experience.length === 0 ? 'Fresher' : undefined);
+  }
+  if (/\b(?:experience|years of experience|total experience|work experience)\b/.test(q)) {
+    const hasExp = profile.experience?.some((e) => e && (e.company?.trim() || e.title?.trim()));
+    return hasExp ? calculateTotalExperience(profile) : 'Fresher';
+  }
+  if (/\b(?:current ctc|present ctc|current salary)\b/.test(q)) {
+    return profile.professional?.currentCtc || (profile.experience.length === 0 ? 'Fresher' : 'N/A');
+  }
+  if (/\b(?:expected ctc|salary expectation|expected salary)\b/.test(q)) {
+    return profile.professional?.expectedCtc || 'As per company norms';
+  }
+  if (/\b(?:notice period|joining time|how soon can you join)\b/.test(q)) {
+    return profile.professional?.noticePeriod || 'Immediate';
+  }
+  if (/\b(?:usn|roll|registration|student id)\b/.test(q)) {
+    return profile.education[0]?.registrationNo;
+  }
+  return undefined;
+}
+
 function resolveFromProfile(control: ChoiceControl, facts: string[], profile: UserProfile): ChoiceDecision | null {
   if (!facts.length) return null;
   const options = control.options.filter((option) => !option.disabled);
   if (!options.length) return null;
   const question = normalize(control.question);
 
-  // --- Gender Question Resolution (deterministic profile check only) ---
+  // --- Gender Question Resolution ---
   const isGenderQuestion = /\b(?:gender|sex)\b/i.test(question) && !/\b(?:transgender)\b/i.test(question);
   if (isGenderQuestion && !control.multiple) {
     const explicitGender = profile.personal.gender?.trim();
@@ -267,10 +373,15 @@ function resolveFromProfile(control: ChoiceControl, facts: string[], profile: Us
         return false;
       });
       if (match) return { controlId: control.id, selectedOptionIds: [match.id], confidence: 0.98, source: 'profile' };
+
+      const otherOpt = findOtherOption(options);
+      if (otherOpt) {
+        return { controlId: control.id, selectedOptionIds: [otherOpt.id], otherText: explicitGender, confidence: 0.95, source: 'profile' };
+      }
     }
   }
 
-  // --- Current academic year (deterministic: avoids model date arithmetic) ---
+  // --- Current academic year ---
   const isAcademicYearQuestion = /\b(?:current (?:academic )?year|academic year|year of (?:study|college|engineering)|which year (?:are you|of))\b/.test(question);
   if (isAcademicYearQuestion && !control.multiple) {
     const year = getCurrentAcademicYear(profile);
@@ -280,40 +391,164 @@ function resolveFromProfile(control: ChoiceControl, facts: string[], profile: Us
     }
   }
 
-  const isPreferenceQuestion = /\b(prefer|preferred|preference|willing|interest(?:ed)?|would you like|do you want|desire|desired|choice|available|availability|joining|relocat(?:e|ion)|on ?site)\b/.test(question);
-  if (isPreferenceQuestion) return null;
-  const isEducationQuestion = /education|degree|qualification|highest.*(school|college|university|degree)/.test(question);
-  const isExperienceQuestion = /professional experience|work experience|years.*experience|experience.*years/.test(question);
-  const isCurrentEmploymentQuestion = /current.*(employment|employ|job|work)|employment status|are you employed/.test(question);
-  const isPastEmployerQuestion = /\b(?:have you|were you|did you)\b.{0,50}\b(?:employed|worked|work)\b/.test(question)
-    && /\b(?:past|previous|previously|before|ever)\b/.test(question);
-  const isSkillQuestion = /skill|language|technology|tool|program|framework|software|cloud|familiar|proficient/.test(question);
+  // --- Branch / Stream / Department Resolution ---
+  const isBranchQuestion = /\b(?:branch|stream|department|discipline|field of study|specialization|course of study)\b/i.test(question);
+  if (isBranchQuestion && !control.multiple) {
+    const branch = (profile.education[0]?.field || profile.secondaryEducation?.twelfth?.stream || '').trim();
+    if (branch) {
+      const match = findBranchOptionMatch(options, branch);
+      if (match) return { controlId: control.id, selectedOptionIds: [match.id], confidence: 0.96, source: 'profile' };
 
-  if (isEducationQuestion) {
-    const educationFacts = getFacts(profile).filter((fact) => fact.section === 'education').map((fact) => fact.value);
-    const levels = educationFacts.map(degreeLevel).filter((level): level is string => Boolean(level));
-    if (levels.length) {
-      const highestLevel = levels.reduce((highest, level) => degreeRank(level) > degreeRank(highest) ? level : highest);
-      const matching = options.filter((option) => degreeLevelFromOption(option) === highestLevel);
-      if (matching.length === 1) return { controlId: control.id, selectedOptionIds: [matching[0].id], confidence: 0.96, source: 'profile' };
+      const otherOpt = findOtherOption(options);
+      if (otherOpt) {
+        return { controlId: control.id, selectedOptionIds: [otherOpt.id], otherText: branch, confidence: 0.95, source: 'profile' };
+      }
+
+      // If "Other" does NOT exist, pick closest matching branch so it fills automatically!
+      const bestMatch = findBestMatchingOption(options, branch);
+      if (bestMatch) {
+        return { controlId: control.id, selectedOptionIds: [bestMatch.id], confidence: 0.88, source: 'profile' };
+      }
     }
   }
 
-  const isGraduationYearQuestion = /graduat(?:e|ion)|year of (?:passing|completion)|completion year/.test(question);
+  // --- College / University Resolution ---
+  const isCollegeQuestion = /\b(?:college|university|institution|institute|school|campus|alma mater)\b/i.test(question)
+    && !/\b(?:highest|degree|qualification|graduation year|passing year|percentage|marks)\b/i.test(question);
+  if (isCollegeQuestion && !control.multiple) {
+    const college = (profile.education[0]?.institution || profile.secondaryEducation?.twelfth?.institution || '').trim();
+    if (college) {
+      const normCollege = normalize(college);
+      const match = options.find((opt) => !opt.disabled && !optionIsGeneric(opt) && (normalize(opt.label) === normCollege || normalize(opt.label).includes(normCollege) || normCollege.includes(normalize(opt.label))));
+      if (match) return { controlId: control.id, selectedOptionIds: [match.id], confidence: 0.96, source: 'profile' };
+
+      const otherOpt = findOtherOption(options);
+      if (otherOpt) {
+        return { controlId: control.id, selectedOptionIds: [otherOpt.id], otherText: college, confidence: 0.95, source: 'profile' };
+      }
+
+      // If "Other" does NOT exist, pick best match so it fills automatically!
+      const bestMatch = findBestMatchingOption(options, college);
+      if (bestMatch) {
+        return { controlId: control.id, selectedOptionIds: [bestMatch.id], confidence: 0.88, source: 'profile' };
+      }
+    }
+  }
+
+  // --- Degree / Education Level Resolution ---
+  const isEducationQuestion = /education|degree|qualification|highest.*(school|college|university|degree)/.test(question);
+  if (isEducationQuestion && !control.multiple) {
+    const degree = (profile.education[0]?.degree || '').trim();
+    if (degree) {
+      const normDegree = normalize(degree);
+      const direct = options.find((opt) => !opt.disabled && !optionIsGeneric(opt) && (normalize(opt.label) === normDegree || normalize(opt.label).includes(normDegree) || normDegree.includes(normalize(opt.label))));
+      if (direct) return { controlId: control.id, selectedOptionIds: [direct.id], confidence: 0.96, source: 'profile' };
+
+      const educationFacts = getFacts(profile).filter((fact) => fact.section === 'education').map((fact) => fact.value);
+      const levels = educationFacts.map(degreeLevel).filter((level): level is string => Boolean(level));
+      if (levels.length) {
+        const highestLevel = levels.reduce((highest, level) => degreeRank(level) > degreeRank(highest) ? level : highest);
+        const matching = options.filter((option) => degreeLevelFromOption(option) === highestLevel);
+        if (matching.length === 1) return { controlId: control.id, selectedOptionIds: [matching[0].id], confidence: 0.96, source: 'profile' };
+      }
+
+      const otherOpt = findOtherOption(options);
+      if (otherOpt) {
+        return { controlId: control.id, selectedOptionIds: [otherOpt.id], otherText: degree, confidence: 0.95, source: 'profile' };
+      }
+    }
+  }
+
+  // --- Backlogs / Arrears Question Resolution ---
+  const isBacklogQuestion = /\b(?:backlog|backlogs|arrear|arrears|kt\b|standing arrears|active backlogs|pending backlogs)\b/i.test(question);
+  if (isBacklogQuestion && !control.multiple) {
+    const zeroBacklogs = options.find((opt) =>
+      !opt.disabled && /^(?:no|0|zero|none|nil|cleared all|no backlogs|0 backlogs)\b/i.test(normalize(opt.label))
+    );
+    if (zeroBacklogs) {
+      return { controlId: control.id, selectedOptionIds: [zeroBacklogs.id], confidence: 0.98, source: 'profile' };
+    }
+  }
+
+  // --- Screening / Willingness / Availability Resolution ---
+  const isScreeningQuestion = /\b(?:available|availability|immediate|immediately|joining|join|start|onsite|on site|internship|relocat(?:e|ion)|hybrid|in person|commute|shift|eligible to work|right to work|background check|declaration|certif(?:y|ication)|agree|terms)\b/i.test(question);
+  if (isScreeningQuestion && !control.multiple) {
+    const yes = findPolarity(options, true);
+    if (yes) {
+      return { controlId: control.id, selectedOptionIds: [yes.id], confidence: 0.97, source: 'profile' };
+    }
+  }
+
+  // --- Location / City Resolution ---
+  const isLocationQuestion = /\b(?:city|current location|where (?:do|are) you (?:live|located)|residing|residence|place of living|native|hometown)\b/i.test(question);
+  if (isLocationQuestion && !control.multiple) {
+    const city = (profile.addresses[0]?.city || profile.addresses[0]?.state || '').trim();
+    if (city) {
+      const match = options.find((opt) => !opt.disabled && normalize(opt.label) === normalize(city));
+      if (match) return { controlId: control.id, selectedOptionIds: [match.id], confidence: 0.96, source: 'profile' };
+
+      const otherOpt = findOtherOption(options);
+      if (otherOpt) {
+        return { controlId: control.id, selectedOptionIds: [otherOpt.id], otherText: city, confidence: 0.95, source: 'profile' };
+      }
+
+      const bestMatch = findBestMatchingOption(options, city);
+      if (bestMatch) {
+        return { controlId: control.id, selectedOptionIds: [bestMatch.id], confidence: 0.88, source: 'profile' };
+      }
+    }
+  }
+
+  const isGraduationYearQuestion = /graduat(?:e|ion)|year of (?:passing|completion)|completion year|batch\b/.test(question);
   if (isGraduationYearQuestion) {
     const educationDates = profile.education.flatMap((item) => [item.startDate, item.endDate]).filter(Boolean) as string[];
     const years = new Set(educationDates.map((date) => date.match(/(?:19|20)\d{2}/)?.[0]).filter(Boolean));
-    if (years.size === 1) {
-      const matching = options.filter((option) => normalize(option.label) === [...years][0]);
-      if (matching.length === 1) return { controlId: control.id, selectedOptionIds: [matching[0].id], confidence: 0.94, source: 'profile' };
+    if (years.size) {
+      const primaryYear = [...years][0];
+      if (primaryYear) {
+        const matching = options.filter((option) => normalize(option.label).includes(primaryYear));
+        if (matching.length === 1) return { controlId: control.id, selectedOptionIds: [matching[0].id], confidence: 0.94, source: 'profile' };
+      }
     }
   }
 
-  if (isExperienceQuestion && profile.experience.some((item) => item.company || item.title)) {
-    const yes = findPolarity(options, true);
-    if (yes) return { controlId: control.id, selectedOptionIds: [yes.id], confidence: 0.97, source: 'profile' };
+  const isExperienceQuestion = /professional experience|work experience|years.*experience|experience.*years|total.*experience/.test(question);
+  if (isExperienceQuestion) {
+    const hasExp = profile.experience.some((item) => item && (item.company?.trim() || item.title?.trim()));
+    if (!hasExp) {
+      const fresherOpt = options.find((opt) => !opt.disabled && /\b(?:fresher|0\s*years?|no\s*experience|none|0\s*-\s*1|entry\s*level)\b/i.test(normalize(opt.label)));
+      if (fresherOpt) return { controlId: control.id, selectedOptionIds: [fresherOpt.id], confidence: 0.98, source: 'profile' };
+      const no = findPolarity(options, false);
+      if (no) return { controlId: control.id, selectedOptionIds: [no.id], confidence: 0.95, source: 'profile' };
+
+      const otherOpt = findOtherOption(options);
+      if (otherOpt) {
+        return { controlId: control.id, selectedOptionIds: [otherOpt.id], otherText: 'Fresher', confidence: 0.95, source: 'profile' };
+      }
+      const bestMatch = findBestMatchingOption(options, 'Fresher');
+      if (bestMatch) {
+        return { controlId: control.id, selectedOptionIds: [bestMatch.id], confidence: 0.88, source: 'profile' };
+      }
+    } else {
+      const totalExp = calculateTotalExperience(profile);
+      const match = options.find((opt) => !opt.disabled && !optionIsGeneric(opt) && (normalize(opt.label).includes(normalize(totalExp)) || normalize(totalExp).includes(normalize(opt.label))));
+      if (match) return { controlId: control.id, selectedOptionIds: [match.id], confidence: 0.96, source: 'profile' };
+      const yes = findPolarity(options, true);
+      if (yes) return { controlId: control.id, selectedOptionIds: [yes.id], confidence: 0.97, source: 'profile' };
+
+      const otherOpt = findOtherOption(options);
+      if (otherOpt) {
+        return { controlId: control.id, selectedOptionIds: [otherOpt.id], otherText: totalExp, confidence: 0.95, source: 'profile' };
+      }
+      const bestMatch = findBestMatchingOption(options, totalExp);
+      if (bestMatch) {
+        return { controlId: control.id, selectedOptionIds: [bestMatch.id], confidence: 0.88, source: 'profile' };
+      }
+    }
   }
 
+  const isPastEmployerQuestion = /\b(?:have you|were you|did you)\b.{0,50}\b(?:employed|worked|work)\b/.test(question)
+    && /\b(?:past|previous|previously|before|ever)\b/.test(question);
   if (isPastEmployerQuestion) {
     const companySuffixes = new Set(['co', 'company', 'corp', 'corporation', 'inc', 'limited', 'llc', 'ltd']);
     const employerMatchesQuestion = profile.experience.some(({ company }) => {
@@ -329,6 +564,7 @@ function resolveFromProfile(control: ChoiceControl, facts: string[], profile: Us
     if (no) return { controlId: control.id, selectedOptionIds: [no.id], confidence: 0.95, source: 'profile' };
   }
 
+  const isCurrentEmploymentQuestion = /current.*(employment|employ|job|work)|employment status|are you employed/.test(question);
   if (isCurrentEmploymentQuestion && profile.experience.some((item) => item.current && (item.company || item.title))) {
     const employed = options.find((option) => /\b(employed|working)\b/.test(normalize(option.label)) && !/self employed|not employed|unemployed/.test(normalize(option.label)));
     if (employed) return { controlId: control.id, selectedOptionIds: [employed.id], confidence: 0.96, source: 'profile' };
@@ -336,6 +572,7 @@ function resolveFromProfile(control: ChoiceControl, facts: string[], profile: Us
     if (yes) return { controlId: control.id, selectedOptionIds: [yes.id], confidence: 0.96, source: 'profile' };
   }
 
+  const isSkillQuestion = /skill|language|technology|tool|program|framework|software|cloud|familiar|proficient/.test(question);
   if (isSkillQuestion && control.multiple) {
     const skills = profile.professional.skills;
     const matched = options.filter((option) => optionMatchesFact(option, skills));
@@ -348,14 +585,31 @@ function resolveFromProfile(control: ChoiceControl, facts: string[], profile: Us
     return null;
   }
 
-  const hasDirectIntent = isEducationQuestion
-    || isGraduationYearQuestion
-    || isCurrentEmploymentQuestion
-    || isSkillQuestion
-    || /(?:what|which) (?:is|are|was|were) your (?:current )?(?:company|employer|job title|role|position)|where (?:are you|do you) (?:currently )?(?:located|live|reside)|your (?:current )?(?:city|state|country|address)/.test(question);
-  if (!hasDirectIntent) return null;
+  // Check direct matches from facts
   const matched = options.filter((option) => optionMatchesFact(option, facts));
   if (matched.length === 1) return { controlId: control.id, selectedOptionIds: [matched[0].id], confidence: 0.93, source: 'profile' };
+
+  // --- Universal "Other" Fallback for questions with relevant profile values ---
+  const inferredValue = inferProfileValueForQuestion(question, profile);
+  const otherOpt = findOtherOption(options);
+  if (otherOpt && inferredValue) {
+    return {
+      controlId: control.id,
+      selectedOptionIds: [otherOpt.id],
+      otherText: inferredValue,
+      confidence: 0.92,
+      source: 'profile',
+    };
+  }
+
+  // --- Universal fallback when "Other" does NOT exist: pick closest matching option so form fills automatically ---
+  if (!control.multiple && options.length > 0 && inferredValue) {
+    const bestMatch = findBestMatchingOption(options, inferredValue);
+    if (bestMatch) {
+      return { controlId: control.id, selectedOptionIds: [bestMatch.id], confidence: 0.85, source: 'profile' };
+    }
+  }
+
   return null;
 }
 

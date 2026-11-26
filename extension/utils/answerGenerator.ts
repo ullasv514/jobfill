@@ -1,9 +1,26 @@
 import type { UserProfile } from '../types/profile';
+import { calculateTotalExperience } from './fieldMapper';
 import { isLinkRequestQuestion } from './questionDetector';
 import { AI_MODEL, requestAgentRouter } from './backendClient';
 
 export function formatProfileAnswerContext(profile: UserProfile): string {
+  const hasExp = profile.experience.some((e) => e && (e.company?.trim() || e.title?.trim()));
   const facts = [
+    hasExp
+      ? `Total Work Experience: ${calculateTotalExperience(profile)}`
+      : 'Total Work Experience: Fresher (0 years of experience, entry-level student/fresher)',
+    hasExp
+      ? (profile.experience[0]?.company ? `Current Company: ${profile.experience[0].company}` : '')
+      : 'Current Company: Fresher / Not employed',
+    profile.professional.currentCtc
+      ? `Current CTC: ${profile.professional.currentCtc}`
+      : (hasExp ? '' : 'Current CTC: Fresher (0 LPA / Not applicable)'),
+    profile.professional.expectedCtc
+      ? `Expected CTC: ${profile.professional.expectedCtc}`
+      : 'Expected CTC: As per company norms',
+    profile.professional.noticePeriod
+      ? `Notice Period: ${profile.professional.noticePeriod}`
+      : 'Notice Period: Immediate (0 days)',
     profile.professional.skills.length > 0 ? `Skills: ${profile.professional.skills.join(', ')}` : '',
     ...profile.experience.map((experience) => {
       const role = [experience.title, experience.company].filter(Boolean).join(' at ');

@@ -106,6 +106,11 @@ export interface ProfessionalInfo {
   github?: string;
   portfolio?: string;
   skills: string[];
+  yearsOfExperience?: string;
+  currentCtc?: string;
+  expectedCtc?: string;
+  noticePeriod?: string;
+  additionalInformation?: string;
 }
 
 // ---- Helpers ----

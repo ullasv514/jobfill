@@ -64,7 +64,18 @@ function matchesExpectedType(document: StoredDocument, expectedType: DocumentTyp
 }
 
 export function selectDocumentForUpload(documents: StoredDocument[], expectedType: DocumentType): StoredDocument | null {
-  const matches = documents.filter((document) => matchesExpectedType(document, expectedType));
+  let matches = documents.filter((document) => matchesExpectedType(document, expectedType));
+  if (matches.length === 0 && expectedType === 'resume') {
+    // Fallback: look for primary document or any document with 'resume' or 'cv' in name or category
+    matches = documents.filter((doc) =>
+      doc.isPrimary ||
+      /\b(resume|cv)\b/i.test(doc.originalName) ||
+      /\b(resume|cv)\b/i.test(doc.category || '')
+    );
+  }
+  if (matches.length === 0 && documents.length > 0 && expectedType === 'resume') {
+    matches = [documents.find((d) => d.isPrimary) || documents[0]];
+  }
   matches.sort((left, right) => {
     if (left.isPrimary !== right.isPrimary) return left.isPrimary ? -1 : 1;
     const versionOrder = (right.version ?? '').localeCompare(left.version ?? '', undefined, { numeric: true });

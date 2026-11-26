@@ -220,11 +220,17 @@ const GOOGLE_FORM_INTENT_DESCRIPTIONS: Partial<Record<ProfileFieldKey, string>> 
   'experience.current.companyName': 'The organization or company name of the applicant\'s current or most recent job or internship.',
   'experience.current.jobTitle': 'The applicant\'s current or most recent job title, role, or designation (e.g. Software Engineer Intern).',
   'experience.current.isCurrentlyEmployed': 'Indicates whether the applicant is currently working or employed.',
+  'experience.total': 'Total work experience or years of experience. Types the calculated experience if user has experience, or "Fresher" if entry-level or no experience updated.',
+  'experience.totalYears': 'Total experience in years or overall experience duration.',
   'professional.linkedinProfileUrl': 'Direct URL to the applicant\'s LinkedIn profile page.',
   'professional.githubProfileUrl': 'Direct URL to the applicant\'s GitHub profile or code repository profile.',
   'professional.portfolioUrl': 'Direct URL to the applicant\'s portfolio website, personal homepage, or online resume link.',
   'professional.skills': 'Comma-separated list of the applicant\'s technical and professional skills.',
+  'professional.currentCtc': 'The applicant\'s current compensation / CTC / salary (e.g. "Fresher", "0 LPA", "6 LPA").',
+  'professional.expectedCtc': 'The applicant\'s expected compensation / CTC / salary expectations (e.g. "As per company norms").',
+  'professional.noticePeriod': 'The applicant\'s notice period or availability to join (e.g. "Immediate", "15 days", "30 days").',
   'application.expectedJoiningDate': 'Expected start date, date of joining, or earliest availability date for the role.',
+  'application.additionalInformation': 'Any additional notes, remarks, comments, or extra information for the job application.',
   'address.primary.fullAddress': 'Complete primary residential address combining street lines, city, state, postal code, and country.',
   'address.primary.streetAddressLine1': 'First street address line (house/flat number, building, street name).',
   'address.primary.streetAddressLine2': 'Second street address line (apartment, suite, unit, floor).',
@@ -698,6 +704,19 @@ async function runChoicePipeline(tabId: number, frameId: number, url: string): P
           });
           continue;
         }
+
+        // Fast deterministic profile rule evaluation (instant, 0 network, handles Other and closest match)
+        const profileDecision = profile ? resolveChoiceFromProfile(control, profile) : null;
+        if (profileDecision && profileDecision.confidence >= 0.85) {
+          decisions.push(profileDecision);
+          await cacheChoice(control, profileOnlyEvidence, profileDecision);
+          console.info(`[JobFill Choice] Tab ${tabId}: ${control.id} ✓ fast resolved from profile rule`, {
+            selectedOptionIds: profileDecision.selectedOptionIds,
+            otherText: profileDecision.otherText,
+          });
+          continue;
+        }
+
         uncachedCandidates.push(control);
       }
 
@@ -1119,18 +1138,67 @@ async function uploadMatchedDocument(tabId: number, task: FileUploadTask): Promi
     if (!document) throw new Error('The matched document is no longer in your document library.');
     const blob = await cloudLoadDocumentBlob(document.id);
     const dataUrl = await blobToDataUrl(blob);
-    const response = await chrome.tabs.sendMessage(
-      tabId,
-      {
-        type: 'INJECT_FILE',
-        selector: task.selector,
+
+    await chrome.storage.session.set({
+      jf_pending_file_upload: {
+        tabId,
         fileName: document.originalName,
         mimeType: document.mimeType,
         dataUrl,
+        selector: task.selector,
+        timestamp: Date.now(),
       },
-      { frameId: task.frameId },
-    ) as { success?: boolean; message?: string };
-    if (!response?.success) throw new Error(response?.message || 'The selected file could not be attached.');
+    });
+
+    let success = false;
+    let message: string | undefined;
+
+    try {
+      const response = await chrome.tabs.sendMessage(
+        tabId,
+        {
+          type: 'INJECT_FILE',
+          selector: task.selector,
+          fileName: document.originalName,
+          mimeType: document.mimeType,
+          dataUrl,
+        },
+        { frameId: task.frameId },
+      ) as { success?: boolean; message?: string };
+      if (response?.success) {
+        success = true;
+        message = response.message;
+      }
+    } catch (err) {
+      console.warn(`[JobFill BG] Direct frame file injection failed on frame ${task.frameId}:`, err);
+    }
+
+    if (!success) {
+      const frames = await chrome.webNavigation.getAllFrames({ tabId }).catch(() => []);
+      for (const frame of frames) {
+        if (frame.frameId === task.frameId) continue;
+        try {
+          const frameResp = await chrome.tabs.sendMessage(
+            tabId,
+            {
+              type: 'INJECT_FILE',
+              selector: task.selector,
+              fileName: document.originalName,
+              mimeType: document.mimeType,
+              dataUrl,
+            },
+            { frameId: frame.frameId },
+          ) as { success?: boolean; message?: string };
+          if (frameResp?.success) {
+            success = true;
+            message = frameResp.message;
+            break;
+          }
+        } catch {}
+      }
+    }
+
+    if (!success) throw new Error(message || 'The selected file could not be attached.');
     await updateFileUploadTask(tabId, task.fieldId, { status: 'UPLOADED' });
   } catch (error) {
     await updateFileUploadTask(tabId, task.fieldId, {

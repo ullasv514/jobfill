@@ -136,11 +136,17 @@ export const ALL_INTENT_KEYS: ProfileFieldKey[] = [
   'experience.current.endDate',
   'experience.current.description',
   'experience.current.isCurrentlyEmployed',
+  'experience.total',
+  'experience.totalYears',
 
   'professional.linkedinProfileUrl',
   'professional.githubProfileUrl',
   'professional.portfolioUrl',
   'professional.skills',
+  'professional.currentCtc',
+  'professional.expectedCtc',
+  'professional.noticePeriod',
 
   'application.expectedJoiningDate',
+  'application.additionalInformation',
 ];

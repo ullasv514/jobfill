@@ -53,6 +53,63 @@ export function resolveProfileValueForField(
   return resolveProfileValue(profile, profileField);
 }
 
+function parseExperienceDate(str?: string): Date | null {
+  if (!str) return null;
+  const trimmed = str.trim();
+  if (/^\d{4}$/.test(trimmed)) {
+    return new Date(Number(trimmed), 0, 1);
+  }
+  const ymMatch = trimmed.match(/^(\d{4})[-/.](\d{1,2})$/);
+  if (ymMatch) {
+    return new Date(Number(ymMatch[1]), Number(ymMatch[2]) - 1, 1);
+  }
+  const d = new Date(trimmed);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+export function calculateTotalExperience(profile: UserProfile): string {
+  if (profile.professional?.yearsOfExperience?.trim()) {
+    return profile.professional.yearsOfExperience.trim();
+  }
+
+  const validExperiences = (profile.experience || []).filter(
+    (item) => item && (item.company?.trim() || item.title?.trim())
+  );
+
+  if (validExperiences.length === 0) {
+    return 'Fresher';
+  }
+
+  let totalMonths = 0;
+  let hasValidDuration = false;
+
+  for (const exp of validExperiences) {
+    if (!exp.startDate) continue;
+    const start = parseExperienceDate(exp.startDate);
+    if (!start) continue;
+
+    const isCurrent = exp.current || !exp.endDate || /present|current|now/i.test(exp.endDate);
+    const end = isCurrent ? new Date() : parseExperienceDate(exp.endDate);
+    if (!end) continue;
+
+    const months = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+    if (months > 0) {
+      totalMonths += months;
+      hasValidDuration = true;
+    }
+  }
+
+  if (hasValidDuration) {
+    if (totalMonths < 12) {
+      return totalMonths <= 0 ? 'Fresher' : `${totalMonths} month${totalMonths > 1 ? 's' : ''}`;
+    }
+    const years = +(totalMonths / 12).toFixed(1);
+    return `${years} years`;
+  }
+
+  return `${validExperiences.length} year${validExperiences.length > 1 ? 's' : ''}`;
+}
+
 /**
  * Resolve a profile field key to its actual value from the profile.
  */
@@ -233,10 +290,10 @@ export function resolveProfileValue(
     // ---- Experience ----
     case 'experience.current.companyName':
     case 'experience.latest.company':
-      return profile.experience[0]?.company;
+      return profile.experience[0]?.company || (profile.experience.length === 0 ? 'Fresher' : 'N/A');
     case 'experience.current.jobTitle':
     case 'experience.latest.title':
-      return profile.experience[0]?.title;
+      return profile.experience[0]?.title || (profile.experience.length === 0 ? 'Fresher' : undefined);
     case 'experience.current.location':
     case 'experience.latest.location':
       return profile.experience[0]?.location;
@@ -250,7 +307,12 @@ export function resolveProfileValue(
     case 'experience.latest.description':
       return profile.experience[0]?.description;
     case 'experience.current.isCurrentlyEmployed':
-      return profile.experience[0]?.current !== undefined ? (profile.experience[0].current ? 'Yes' : 'No') : undefined;
+      return profile.experience[0]?.current !== undefined
+        ? (profile.experience[0].current ? 'Yes' : 'No')
+        : (profile.experience.length === 0 ? 'No' : undefined);
+    case 'experience.total':
+    case 'experience.totalYears':
+      return calculateTotalExperience(profile);
 
     // ---- Professional ----
     case 'professional.linkedinProfileUrl':
@@ -266,6 +328,12 @@ export function resolveProfileValue(
       return profile.professional.skills.length > 0
         ? profile.professional.skills.join(', ')
         : undefined;
+    case 'professional.currentCtc':
+      return profile.professional.currentCtc || (profile.experience.length === 0 ? 'Fresher' : 'N/A');
+    case 'professional.expectedCtc':
+      return profile.professional.expectedCtc || 'As per company norms';
+    case 'professional.noticePeriod':
+      return profile.professional.noticePeriod || 'Immediate';
 
     // ---- Application ----
     case 'application.expectedJoiningDate': {
@@ -275,6 +343,8 @@ export function resolveProfileValue(
       const day = String(today.getDate()).padStart(2, '0');
       return `${year}-${month}-${day}`;
     }
+    case 'application.additionalInformation':
+      return profile.professional.additionalInformation || 'N/A';
 
     default:
       return undefined;

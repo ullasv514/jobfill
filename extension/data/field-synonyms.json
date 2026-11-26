@@ -2135,5 +2135,101 @@
       "phd defense date",
       "phd end year"
     ]
+  },
+  {
+    "profileField": "experience.total",
+    "synonyms": [
+      "total work experience",
+      "total experience",
+      "work experience",
+      "total years of experience",
+      "years of experience",
+      "total experience in years",
+      "work experience in years",
+      "total work experience in years",
+      "total work exp",
+      "work exp",
+      "total exp",
+      "experience in years",
+      "exp in years",
+      "overall experience",
+      "overall work experience",
+      "relevant experience",
+      "relevant work experience",
+      "how many years of experience do you have",
+      "how many years of work experience do you have",
+      "total professional experience",
+      "professional experience in years"
+    ],
+    "weak": [
+      "experience"
+    ]
+  },
+  {
+    "profileField": "professional.currentCtc",
+    "synonyms": [
+      "current ctc",
+      "current ctc in lpa",
+      "current ctc lpa",
+      "present ctc",
+      "current salary",
+      "present salary",
+      "current package",
+      "current annual ctc",
+      "current compensation",
+      "present compensation",
+      "current fixed ctc",
+      "current ctc per annum",
+      "existing ctc",
+      "present annual salary"
+    ]
+  },
+  {
+    "profileField": "professional.expectedCtc",
+    "synonyms": [
+      "expected ctc",
+      "expected ctc in lpa",
+      "expected ctc lpa",
+      "expected salary",
+      "expected package",
+      "salary expectation",
+      "ctc expectation",
+      "expected annual ctc",
+      "expected compensation",
+      "expected remuneration",
+      "expected ctc per annum",
+      "desired salary",
+      "desired ctc"
+    ]
+  },
+  {
+    "profileField": "professional.noticePeriod",
+    "synonyms": [
+      "notice period",
+      "notice period in days",
+      "official notice period",
+      "serving notice period",
+      "how soon can you join",
+      "joining time",
+      "notice period days",
+      "notice period duration",
+      "availability to join",
+      "time required to join",
+      "how many days notice period"
+    ]
+  },
+  {
+    "profileField": "application.additionalInformation",
+    "synonyms": [
+      "any additional information",
+      "additional information",
+      "additional info",
+      "any other information",
+      "other information",
+      "any remarks",
+      "additional comments",
+      "any other details",
+      "anything else you would like to share"
+    ]
   }
 ]

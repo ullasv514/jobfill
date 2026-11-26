@@ -871,6 +871,84 @@ export default function ProfileSection({ profile, onSave }: ProfileSectionProps)
           />
         </div>
         <div className="form-group">
+          <label className="form-label">
+            Total Work Experience
+            <CopyButton value={profile.professional.yearsOfExperience ?? ''} label="Total Experience" />
+          </label>
+          <input
+            id="profile-years-of-experience"
+            className="form-input"
+            type="text"
+            placeholder="e.g. Fresher or 2 years"
+            value={profile.professional.yearsOfExperience ?? ''}
+            onChange={(e) =>
+              update('professional', {
+                ...profile.professional,
+                yearsOfExperience: e.target.value,
+              })
+            }
+          />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+          <div className="form-group">
+            <label className="form-label">
+              Current CTC
+              <CopyButton value={profile.professional.currentCtc ?? ''} label="Current CTC" />
+            </label>
+            <input
+              id="profile-current-ctc"
+              className="form-input"
+              type="text"
+              placeholder="e.g. Fresher / 0 LPA"
+              value={profile.professional.currentCtc ?? ''}
+              onChange={(e) =>
+                update('professional', {
+                  ...profile.professional,
+                  currentCtc: e.target.value,
+                })
+              }
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">
+              Expected CTC
+              <CopyButton value={profile.professional.expectedCtc ?? ''} label="Expected CTC" />
+            </label>
+            <input
+              id="profile-expected-ctc"
+              className="form-input"
+              type="text"
+              placeholder="e.g. As per company norms"
+              value={profile.professional.expectedCtc ?? ''}
+              onChange={(e) =>
+                update('professional', {
+                  ...profile.professional,
+                  expectedCtc: e.target.value,
+                })
+              }
+            />
+          </div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">
+            Notice Period
+            <CopyButton value={profile.professional.noticePeriod ?? ''} label="Notice Period" />
+          </label>
+          <input
+            id="profile-notice-period"
+            className="form-input"
+            type="text"
+            placeholder="e.g. Immediate or 15 days"
+            value={profile.professional.noticePeriod ?? ''}
+            onChange={(e) =>
+              update('professional', {
+                ...profile.professional,
+                noticePeriod: e.target.value,
+              })
+            }
+          />
+        </div>
+        <div className="form-group">
           <label className="form-label">Skills</label>
           <div className="tag-container">
             {profile.professional.skills.map((skill) => (

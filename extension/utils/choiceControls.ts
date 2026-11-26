@@ -623,6 +623,18 @@ async function waitForCheckedState(element: HTMLElement, expected: boolean, time
 }
 
 function findOtherResponseField(optionElement: HTMLElement): HTMLInputElement | HTMLTextAreaElement | null {
+  // 1. Google Forms specific check: look in question card or sibling container for "Other response" input
+  const card = optionElement.closest<HTMLElement>('.Qr7Oae, [jsmodel="CP1oW"], [role="listitem"]');
+  if (card) {
+    const gfInput = card.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+      'input[aria-label*="Other response" i], input[aria-label*="other response" i], input[aria-label*="other" i], .HwnBz input, input.whsOnd[jsname="YPqjbf"]'
+    );
+    if (gfInput && isRendered(gfInput) && !gfInput.disabled && !gfInput.readOnly) {
+      return gfInput;
+    }
+  }
+
+  // 2. Standard search across parent containers
   let container: HTMLElement | null = optionElement.closest('label') ?? optionElement;
   for (let depth = 0; container && depth < 5; depth++, container = container.parentElement) {
     const fields = Array.from(container.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
@@ -630,6 +642,10 @@ function findOtherResponseField(optionElement: HTMLElement): HTMLInputElement | 
     )).filter((field) => isRendered(field) && !field.disabled && !field.readOnly);
     const choiceOptions = container.querySelectorAll('input[type="radio"], [role="radio"], input[type="checkbox"], [role="checkbox"]');
     if (fields.length === 1 && choiceOptions.length <= 1) return fields[0];
+    if (fields.length > 0) {
+      const explicitOther = fields.find((f) => /other/i.test(f.getAttribute('aria-label') || f.placeholder || f.name || ''));
+      if (explicitOther) return explicitOther;
+    }
   }
   return null;
 }

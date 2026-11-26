@@ -1,7 +1,7 @@
 import type { UserProfile } from '../types/profile';
 import type { DropdownControl, DropdownDecision, DropdownOption } from '../types/dropdown';
 import type { ChoiceControl, ChoiceEvidence } from '../types/choice';
-import { getRelevantProfileFacts, resolveChoicesWithAI } from './choiceResolver';
+import { getRelevantProfileFacts, resolveChoicesWithAI, resolveChoiceFromProfile } from './choiceResolver';
 import { classifyLevelHint, pickEducation } from './educationPicker';
 import { isDropdownPlaceholder } from './dropdownControls';
 import { isDropdownAIEnabled } from './dropdownSettings';
@@ -261,6 +261,25 @@ export async function resolveDropdownRules(
       result.decisions.push(decision);
       void cacheDropdown(control, profileFacts, decision);
       continue;
+    }
+
+    // Fast deterministic profile rule evaluation for dropdowns (Branch, College, Gender, Year, etc.)
+    if (profile) {
+      const choiceCtrl = toChoiceControl(control);
+      const choiceDecision = resolveChoiceFromProfile(choiceCtrl, profile);
+      if (choiceDecision && choiceDecision.selectedOptionIds.length > 0) {
+        const selectedId = choiceDecision.selectedOptionIds[0];
+        const originalOption = control.options.find((option) =>
+          `${control.id}:option:${option.index}` === selectedId || option.label.trim() === selectedId
+        );
+        if (originalOption && !originalOption.disabled && !isDropdownPlaceholder(originalOption.label)) {
+          if (currentlySelected?.index === originalOption.index) continue;
+          const decision = makeDecision(control, originalOption, 'profile', choiceDecision.confidence);
+          result.decisions.push(decision);
+          void cacheDropdown(control, profileFacts, decision);
+          continue;
+        }
+      }
     }
 
     if (currentlySelected) {

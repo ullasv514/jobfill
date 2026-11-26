@@ -129,6 +129,17 @@ function isValidCalendarDate(year: number, month: number, day: number): boolean 
     && date.getUTCDate() === day;
 }
 
+function formatValueForInput(el: HTMLInputElement | HTMLTextAreaElement, rawValue: string): string {
+  if (el instanceof HTMLInputElement && el.type === 'number') {
+    if (/fresher|none|n\/?a|nil/i.test(rawValue)) {
+      return '0';
+    }
+    const numMatch = rawValue.match(/(\d+(?:\.\d+)?)/);
+    if (numMatch) return numMatch[1];
+  }
+  return rawValue;
+}
+
 function formatDateForInput(el: HTMLInputElement, value: string): string {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return value;
@@ -1104,8 +1115,8 @@ async function fillFieldsPass(mappings: FieldMapping[]): Promise<AutofillResult>
           continue;
         }
         const value = el instanceof HTMLInputElement
-          ? workdayDateValue ?? formatDateForInput(el, mapping.value)
-          : mapping.value;
+          ? formatValueForInput(el, workdayDateValue ?? formatDateForInput(el, mapping.value))
+          : formatValueForInput(el, mapping.value);
         setNativeValue(el, value);
         dispatchInputEvents(el, true /* skipBlur */);
         ok = true;
@@ -1220,7 +1231,7 @@ async function fillFieldsPass(mappings: FieldMapping[]): Promise<AutofillResult>
           };
 
           if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-            setNativeValue(el, value);
+            setNativeValue(el, formatValueForInput(el, value));
             dispatchInputEvents(el, true /* skipBlur */);
             ok = true;
           } else if (el instanceof HTMLSelectElement) {
